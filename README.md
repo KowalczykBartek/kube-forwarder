@@ -5,16 +5,20 @@ https://www.rust-lang.org/tools/install
 ```
 then just
 ```
-sudo ./target/debug/kube-forwarder --kube-config /Users/kubeconfig.yaml forward-traffic 
+sudo ./target/debug/kube-forwarder --kube-config /Users/kubeconfig.yaml
 ```
 to forward traffic to appropriate POD. Sudo is required because of http is running on port 80.
 When forwarder is running, you can curl using kube-dns entries (curl -X GET http://your-app.namespace)
 
-To generate entries for /etc/hosts, type 
+To make kube-forwarder working, you need to add necessary entries in /etc/hosts. To handle following request:
 ```
-./target/debug/kube-forwarder --kube-config /Users/kubeconfig.yaml generate-etc-hosts-entries namespace1 namespace2
+curl http://test-app1.namespace1/some/resource
 ```
-/etc/hosts needs to be manually edited
+add 
+```
+127.0.0.1 test-app1.namespace1
+```
+in /etc/hosts
 
 ## how it works
 basically that is how it works

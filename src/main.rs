@@ -1,172 +1,66 @@
-mod connection_dispatcher;
-mod kubernetes_utils;
-mod kubernetes_api_service;
+mod print_ascii;
+mod forwarding_service;
+use forwarding_service::PortForwardConnectionService;
+use print_ascii::print_rocket_std_output;
+use std::net::SocketAddr;
+use hyper::server::conn::Http;
+use tokio::net::TcpListener;
+use kube::Client;
+use tower::ServiceBuilder;
 
-use kubernetes_api_service::ApiService;
-use connection_dispatcher::ConnectionsDispatcher;
-use kubernetes_utils::KubernetesRepository;
-use std::error::Error;
-use std::collections::HashMap;
-use std::{convert::Infallible, net::SocketAddr, sync::Arc};
-use hyper::{
-    service::{make_service_fn, service_fn},
-    Body, Request, Response, Server,
-};
-use tokio::sync::Mutex;
-use tower::ServiceExt;
-use clap::{Parser, Subcommand};
-use http::{StatusCode};
-use hyper::body;
-use hyper::HeaderMap;
-use hyper::Uri;
-use bytes::Bytes;
-use hyper::Method;
+//kube deps
+use clap::{Parser};
+use kube::{client::ConfigExt, Config};
+use kube::config::{Kubeconfig, KubeConfigOptions};
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
     #[clap(short, long)]
     kube_config: String,
-
-    #[clap(subcommand)]
-    operation: Operation,
-}
-
-#[derive(clap::ArgEnum, Clone, Debug, Subcommand)]
-enum Operation {
-    GenerateEtcHostsEntries{
-        namespaces: Vec<String>
-    },
-    ForwardTraffic
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {   
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     std::env::set_var("RUST_LOG", "info,kube=trace");
     env_logger::init();
-     
+
     //define program parameter's api
     let args = Args::parse();
     let kube_config_location = &args.kube_config;
-    log::info!("Received kube-config={}", kube_config_location);
 
-    let kube_repository = KubernetesRepository::new(kube_config_location).await;
-    
-    match args.operation {
-        Operation::GenerateEtcHostsEntries{namespaces} => {
-            log::info!("generating /etc/hosts entries for {:?} namespaces", namespaces);  
-            let client = kube_repository.client.clone();
-            let api_service = ApiService::new(client);
-            for namespace in namespaces {
-                api_service.print_hosts_entries_for_namespace(&namespace).await;
-            } 
-        }
-        Operation::ForwardTraffic => {
-            let upstream_connections = HashMap::new();
-            let client = kube_repository.client.clone();
-            let state = ConnectionsDispatcher {
-                client,
-                upstream_connections
-            };
-        
-            let context = Arc::new(Mutex::new(state));
-            let make_service = make_service_fn(move |_conn| {
-                let context = context.clone();
-                let service = service_fn(move |req| handle(req, context.clone()));
-                async move { Ok::<_, Infallible>(service) }
-            });
-        
-            let addr = SocketAddr::from(([127, 0, 0, 1], 80));
-            let server = Server::bind(&addr)
-                 .serve(make_service);
-         
-            if let Err(e) = server.await {
-                println!("server error: {}", e);
-            }          
-        }
-    } 
+    print_rocket_std_output();
 
-    Ok(())
-}
+    //construct kube interraction api
+    let kubeconf = Kubeconfig::read_from(kube_config_location).unwrap();
+    let opts = KubeConfigOptions::default();
 
-async fn handle(req: Request<Body>, 
-    context: Arc<Mutex<ConnectionsDispatcher>>,
-) -> Result<Response<Body>, Infallible> {
-    let headers = req.headers();
-    //from time to time I think rust could be smarter xD
-    let host = String::from(headers.get("host").unwrap().to_str().unwrap().clone());
-    log::info!("received request for host={} {:?}", host, req);
+    let config = Config::from_custom_kubeconfig(kubeconf, &opts).await.unwrap();
+    let https = config.rustls_https_connector()?;
+    let service = ServiceBuilder::new()
+        .layer(config.base_uri_layer())
+        .option_layer(config.auth_layer()?)
+        .service(hyper::Client::builder().build(https));
+            
+    let client = Client::new(service, "there-is-no-default-namespace");
 
-    let mut context = context.lock().await;
+    let addr: SocketAddr = ([127, 0, 0, 1], 80).into();
+    let tcp_listener = TcpListener::bind(addr).await?;
+    loop {
+        let (tcp_stream, _) = tcp_listener.accept().await?;
 
-    let headers = req.headers().clone();
-    let method = req.method().clone();
-    let uri = req.uri().clone();
-    let body = body::to_bytes(req.into_body()).await.unwrap();
+        let k8s_client = client.clone();
+        let forwarding_connection = PortForwardConnectionService::new(k8s_client);
 
-    log::info!("forwarding reuqest");  
+        tokio::task::spawn(async move {
+            if let Err(http_err) = Http::new()
+                    .http1_only(true)
+                    .http1_keep_alive(true)
+                    .serve_connection(tcp_stream, forwarding_connection)
+                    .await {
+                log::error!("Error while serving HTTP connection: {}", http_err);
+            }
+        });
+     }
 
-    log::info!("    uri {}", uri);  
-    log::info!("    method {}", uri);  
-    log::info!("    headers {:?}", headers);  
-    log::info!("    body {:?}", body);  
-
-    let mut mut_context = &mut *context;
-
-    match forward_reuqest_with_retry(&mut mut_context, &host, headers, uri, method, body).await {
-        Ok(response) => {
-            log::info!("responding with {:?}", response);
-            Ok(response)
-        }, 
-        Err(err) => {
-            log::error!("Error occured {:?}", err);
-            Ok(contruct_internal_server_error())
-        }
-    }
-}
-
-async fn forward_reuqest_with_retry(context: &mut ConnectionsDispatcher, target: &str, headers: HeaderMap, uri: Uri, method: Method, body: Bytes) -> Result<Response<Body>, Box<dyn Error + Send + Sync>> {
-
-    match forward_reuqest(context, target, headers.clone(), uri.clone(), method.clone(), body.clone()).await {
-        Ok(response) => {
-            Ok(response)
-        },
-        Err(err) => {
-            log::error!("Error occured {} - retrying !", err);
-            context.report_broken_upstream_connection(target);
-            Ok(forward_reuqest(context, target, headers.clone(), uri.clone(), method.clone(), body.clone()).await?)
-        }
-    }
-}
-
-async fn forward_reuqest(context: &mut ConnectionsDispatcher, target: &str, headers: HeaderMap, uri: Uri, method: Method, body: Bytes) -> Result<Response<Body>, Box<dyn Error + Send + Sync>> {
-
-    let sender = context.get_upstream_client(target).await.unwrap();
-
-    let mut request_builder = Request::builder()
-        .method(method)
-        .uri(uri);
-
-    let new_headers = request_builder.headers_mut().unwrap();
-
-    //copy all headers
-    for header in headers {
-        if let Some(header_name) = header.0 {
-            new_headers.insert(header_name, header.1);
-        }
-    }
-
-    let body = Body::from(body);
-    let req = request_builder.body(body).unwrap();
-    let resp = sender.ready().await?.send_request(req).await?;
-
-    Ok(resp)
-}
-
-fn contruct_internal_server_error() -> Response<Body> {
-    let response = Response::builder()
-        .status(StatusCode::INTERNAL_SERVER_ERROR)
-        .body(Body::empty())
-        .unwrap();
-    response
 }
