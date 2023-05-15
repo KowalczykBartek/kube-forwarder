@@ -81,7 +81,7 @@ where json file has following format
 ]
 ```
 then fowarder will match following request 
-```json
+```
 curl "http://application.test/api/something" | jq
 {
   "squadName": "Super hero squad",
