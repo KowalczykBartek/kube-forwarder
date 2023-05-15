@@ -1,3 +1,5 @@
+use crate::mocks_reader::Mock;
+
 use std::error::Error;
 use std:: sync::Mutex;
 use std::{convert::Infallible,sync::Arc};
@@ -46,13 +48,15 @@ impl fmt::Display for RuntimeError {
 }
 
 pub struct PortForwardConnectionService {
-    pub k8s_client: Client,
-    pub connection: Arc<Mutex<Option<SendRequest<Body>>>>
+    k8s_client: Client,
+    mocks: Arc<Vec<Mock>>,
+    connection: Arc<Mutex<Option<SendRequest<Body>>>>
 }
 
 impl PortForwardConnectionService {
-    pub fn new(k8s_client: Client) -> PortForwardConnectionService {
-        PortForwardConnectionService {k8s_client, connection: Arc::new(Mutex::new(None))}
+    /// Creates a new [`PortForwardConnectionService`].
+    pub fn new(k8s_client: Client, mocks: Arc<Vec<Mock>>) -> PortForwardConnectionService {
+        PortForwardConnectionService {k8s_client, mocks, connection: Arc::new(Mutex::new(None))}
     }
 }
 
@@ -74,6 +78,8 @@ impl Service<Request<Body>> for PortForwardConnectionService {
 
         let send_request = self.connection.clone();
         let state_for_move_block = state.clone();
+        let mocks = Arc::clone(&self.mocks);
+
         let future = async move {
             let headers = req.headers().clone();
             let host = String::from(headers.get("host").unwrap().to_str().unwrap().clone());
@@ -89,6 +95,14 @@ impl Service<Request<Body>> for PortForwardConnectionService {
             let application_name = host_and_namespace[0];
             let namespace = host_and_namespace[1];
             log::info!("[{}] application_name {} namespace {}", host, application_name, namespace);
+
+            //TODO extrct
+            for mock in mocks.iter() {
+                if mock.request_match(&req) {
+                    log::info!("[{}] serving response from the mock - mock {:?}", host, mock);
+                    return Ok(mock.construct_response_from_mock());
+                }
+            }
 
             match sender {
                 Some(mut sender) => {

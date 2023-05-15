@@ -20,6 +20,113 @@ add
 ```
 in /etc/hosts
 
+## mocks
+during local developemt you may want to return mocked response instead requesting port-forwarder app, to do this you can 
+provide file with mocks
+```
+--mock-location mocks.json
+```
+where json file has following format 
+
+```json
+[
+    {
+        "host": "application.test",
+        "method": "GET",
+        "match_uri_regex": "/api/something",
+        "mocked_response": {
+            "squadName": "Super hero squad",
+            "homeTown": "Metro City",
+            "formed": 2016,
+            "secretBase": "Super tower",
+            "active": true,
+            "members": [
+              {
+                "name": "Molecule Man",
+                "age": 29,
+                "secretIdentity": "Dan Jukes",
+                "powers": ["Radiation resistance", "Turning tiny", "Radiation blast"]
+              },
+              {
+                "name": "Madame Uppercut",
+                "age": 39,
+                "secretIdentity": "Jane Wilson",
+                "powers": [
+                  "Million tonne punch",
+                  "Damage resistance",
+                  "Superhuman reflexes"
+                ]
+              },
+              {
+                "name": "Eternal Flame",
+                "age": 1000000,
+                "secretIdentity": "Unknown",
+                "powers": [
+                  "Immortality",
+                  "Heat Immunity",
+                  "Inferno",
+                  "Teleportation",
+                  "Interdimensional travel"
+                ]
+              }
+            ]
+          }
+          ,
+        "headers" : {
+            "content-type": "application/json",
+            "location": "http://application.test/resource/203f972e-0496-4955-a481-a358be1004a2"
+        },
+        "status": 200
+    }
+]
+```
+then fowarder will match following request 
+```json
+curl "http://application.test/api/something" | jq
+{
+  "squadName": "Super hero squad",
+  "secretBase": "Super tower",
+  "homeTown": "Metro City",
+  "formed": 2016,
+  "active": true,
+  "members": [
+    {
+      "name": "Molecule Man",
+      "age": 29,
+      "secretIdentity": "Dan Jukes",
+      "powers": [
+        "Radiation resistance",
+        "Turning tiny",
+        "Radiation blast"
+      ]
+    },
+    {
+      "name": "Madame Uppercut",
+      "age": 39,
+      "secretIdentity": "Jane Wilson",
+      "powers": [
+        "Million tonne punch",
+        "Damage resistance",
+        "Superhuman reflexes"
+      ]
+    },
+    {
+      "name": "Eternal Flame",
+      "age": 1000000,
+      "secretIdentity": "Unknown",
+      "powers": [
+        "Immortality",
+        "Heat Immunity",
+        "Inferno",
+        "Teleportation",
+        "Interdimensional travel"
+      ]
+    }
+  ]
+}
+```
+and respond with mocked body.
+
 ## how it works
 basically that is how it works
 ![howitworks](howitworks.png)
