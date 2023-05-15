@@ -26,7 +26,7 @@ provide file with mocks
 ```
 --mock-location mocks.json
 ```
-where json file has following format 
+where json file has following format ([example file](overrides.json))
 
 ```json
 [
@@ -35,46 +35,13 @@ where json file has following format
         "method": "GET",
         "match_uri_regex": "/api/something",
         "mocked_response": {
-            "squadName": "Super hero squad",
-            "homeTown": "Metro City",
-            "formed": 2016,
-            "secretBase": "Super tower",
-            "active": true,
-            "members": [
-              {
-                "name": "Molecule Man",
-                "age": 29,
-                "secretIdentity": "Dan Jukes",
-                "powers": ["Radiation resistance", "Turning tiny", "Radiation blast"]
-              },
-              {
-                "name": "Madame Uppercut",
-                "age": 39,
-                "secretIdentity": "Jane Wilson",
-                "powers": [
-                  "Million tonne punch",
-                  "Damage resistance",
-                  "Superhuman reflexes"
-                ]
-              },
-              {
-                "name": "Eternal Flame",
-                "age": 1000000,
-                "secretIdentity": "Unknown",
-                "powers": [
-                  "Immortality",
-                  "Heat Immunity",
-                  "Inferno",
-                  "Teleportation",
-                  "Interdimensional travel"
-                ]
-              }
-            ]
-          }
-          ,
-        "headers" : {
+            "name": "John Smith",
+            "sku": "20223",
+            "price": 23.95
+        },
+        "headers": {
             "content-type": "application/json",
-            "location": "http://application.test/resource/203f972e-0496-4955-a481-a358be1004a2"
+            "location": "http://application.test/api/something"
         },
         "status": 200
     }
@@ -84,45 +51,9 @@ then fowarder will match following request
 ```
 curl "http://application.test/api/something" | jq
 {
-  "squadName": "Super hero squad",
-  "secretBase": "Super tower",
-  "homeTown": "Metro City",
-  "formed": 2016,
-  "active": true,
-  "members": [
-    {
-      "name": "Molecule Man",
-      "age": 29,
-      "secretIdentity": "Dan Jukes",
-      "powers": [
-        "Radiation resistance",
-        "Turning tiny",
-        "Radiation blast"
-      ]
-    },
-    {
-      "name": "Madame Uppercut",
-      "age": 39,
-      "secretIdentity": "Jane Wilson",
-      "powers": [
-        "Million tonne punch",
-        "Damage resistance",
-        "Superhuman reflexes"
-      ]
-    },
-    {
-      "name": "Eternal Flame",
-      "age": 1000000,
-      "secretIdentity": "Unknown",
-      "powers": [
-        "Immortality",
-        "Heat Immunity",
-        "Inferno",
-        "Teleportation",
-        "Interdimensional travel"
-      ]
-    }
-  ]
+  "sku": "20223",
+  "price": 23.95,
+  "name": "John Smith"
 }
 ```
 and respond with mocked body.
