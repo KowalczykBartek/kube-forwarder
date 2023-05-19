@@ -33,7 +33,7 @@ where json file has following format ([example file](overrides.json))
     {
         "host": "application.test",
         "method": "GET",
-        "match_uri_regex": "/api/something",
+        "match_uri_regex": "/test/[^/]*/example",
         "mocked_response": {
             "name": "John Smith",
             "sku": "20223",
@@ -49,7 +49,7 @@ where json file has following format ([example file](overrides.json))
 ```
 then fowarder will match following request 
 ```
-curl "http://application.test/api/something" | jq
+curl "http://application.test/test/abcd/example" | jq
 {
   "sku": "20223",
   "price": 23.95,

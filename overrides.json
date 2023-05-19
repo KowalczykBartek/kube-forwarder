@@ -2,7 +2,7 @@
     {
         "host": "application.test",
         "method": "GET",
-        "match_uri_regex": "/api/something",
+        "match_uri_regex": "/test/[^/]*/example",
         "mocked_response": {
             "name": "John Smith",
             "sku": "20223",
