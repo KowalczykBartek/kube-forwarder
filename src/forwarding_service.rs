@@ -4,8 +4,9 @@ use std::error::Error;
 use std:: sync::Mutex;
 use std::{convert::Infallible,sync::Arc};
 use futures_util::StreamExt;
+use hyper::http::HeaderValue;
 use hyper::{
-    Body, Request, Response,
+    Body, Request, Response, Method,
 };
 use k8s_openapi::api::core::v1::Pod;
 use kube::{
@@ -50,13 +51,14 @@ impl fmt::Display for RuntimeError {
 pub struct PortForwardConnectionService {
     k8s_client: Client,
     mocks: Arc<Vec<Mock>>,
+    apply_cors: bool,
     connection: Arc<Mutex<Option<SendRequest<Body>>>>
 }
 
 impl PortForwardConnectionService {
     /// Creates a new [`PortForwardConnectionService`].
-    pub fn new(k8s_client: Client, mocks: Arc<Vec<Mock>>) -> PortForwardConnectionService {
-        PortForwardConnectionService {k8s_client, mocks, connection: Arc::new(Mutex::new(None))}
+    pub fn new(k8s_client: Client, mocks: Arc<Vec<Mock>>, apply_cors: bool) -> PortForwardConnectionService {
+        PortForwardConnectionService {k8s_client, mocks, connection: Arc::new(Mutex::new(None)), apply_cors}
     }
 }
 
@@ -78,7 +80,8 @@ impl Service<Request<Body>> for PortForwardConnectionService {
 
         let send_request = self.connection.clone();
         let state_for_move_block = state.clone();
-        let mocks = Arc::clone(&self.mocks);
+        let mocks: Arc<Vec<Mock>> = Arc::clone(&self.mocks);
+        let apply_cors = self.apply_cors;
 
         let future = async move {
             let headers = req.headers().clone();
@@ -95,6 +98,16 @@ impl Service<Request<Body>> for PortForwardConnectionService {
             let application_name = host_and_namespace[0];
             let namespace = host_and_namespace[1];
             log::info!("[{}] application_name {} namespace {}", host, application_name, namespace);
+
+            if req.method() == Method::OPTIONS && apply_cors {
+                //fix cors 
+                let mut cors_response = Response::builder().status(200).body("{}".into()).unwrap();
+                cors_response.headers_mut().insert("access-Control-Allow-Origin", HeaderValue::from_static("*"));
+                cors_response.headers_mut().insert("access-Control-Allow-Methods", HeaderValue::from_static("*"));
+                cors_response.headers_mut().insert("access-Control-Expose-Headers", HeaderValue::from_static("*"));
+                cors_response.headers_mut().insert("access-Control-Allow-Headers", HeaderValue::from_static("*"));
+                return Ok(cors_response);
+            }
 
             //TODO extrct
             for mock in mocks.iter() {
@@ -219,7 +232,6 @@ fn modify_request(host: &str, req: Request<Body>) -> Request<Body> {
         .unwrap();
 
     request.headers_mut().extend(headers);
-    
     request
 }
 
@@ -237,5 +249,13 @@ fn modify_response(host: &str, res: Response<Body>) -> Response<Body> {
         });
 
     let debugable_body = Body::wrap_stream(debugable_body);
-    Response::from_parts(parts, debugable_body)
+    let mut response = Response::from_parts(parts, debugable_body);
+
+    //i am not sure all those headers are required ..
+    response.headers_mut().insert("access-Control-Allow-Origin", HeaderValue::from_static("*"));
+    response.headers_mut().insert("access-Control-Allow-Methods", HeaderValue::from_static("*"));
+    response.headers_mut().insert("access-Control-Expose-Headers", HeaderValue::from_static("*"));
+    response.headers_mut().insert("access-Control-Allow-Headers", HeaderValue::from_static("*"));
+
+    response
 }

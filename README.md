@@ -58,6 +58,13 @@ curl "http://application.test/test/abcd/example" | jq
 ```
 and respond with mocked body.
 
+## cors
+by passing
+```
+--apply-cors
+```
+you should be able to access port-forwarded app from browser.
+
 ## how it works
 basically that is how it works
 ![howitworks](howitworks.png)

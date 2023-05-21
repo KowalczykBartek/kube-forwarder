@@ -25,6 +25,9 @@ struct Args {
 
     #[clap(short, long)]
     mock_location: Option<String>,
+
+    #[clap(long, short, action)]
+    apply_cors: bool
 }
 
 #[tokio::main]
@@ -43,8 +46,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
 
     let mocks = Arc::new(mocks);
-
     log::info!("received mocks for kube {:?}", mocks);
+
+    let apply_cors = args.apply_cors;
+    log::info!("will kubeforwarder handle cors {:?}", apply_cors);
 
     print_rocket_std_output();
 
@@ -67,7 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let (tcp_stream, _) = tcp_listener.accept().await?;
 
         let k8s_client = client.clone();
-        let forwarding_connection = PortForwardConnectionService::new(k8s_client, Arc::clone(&mocks));
+        let forwarding_connection = PortForwardConnectionService::new(k8s_client, Arc::clone(&mocks), apply_cors);
 
         tokio::task::spawn(async move {
             if let Err(http_err) = Http::new()
