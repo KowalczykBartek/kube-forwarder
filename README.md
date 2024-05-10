@@ -20,51 +20,6 @@ add
 ```
 in /etc/hosts
 
-## mocks
-during local developemt you may want to return mocked response instead requesting port-forwarder app, to do this you can 
-provide file with mocks
-```
---mock-location mocks.json
-```
-where json file has following format ([example file](overrides.json))
-
-```json
-[
-    {
-        "host": "application.test",
-        "method": "GET",
-        "match_uri_regex": "/test/[^/]*/example",
-        "mocked_response": {
-            "name": "John Smith",
-            "sku": "20223",
-            "price": 23.95
-        },
-        "headers": {
-            "content-type": "application/json",
-            "location": "http://application.test/api/something"
-        },
-        "status": 200
-    }
-]
-```
-then fowarder will match following request 
-```
-curl "http://application.test/test/abcd/example" | jq
-{
-  "sku": "20223",
-  "price": 23.95,
-  "name": "John Smith"
-}
-```
-and respond with mocked body.
-
-## cors
-by passing
-```
---apply-cors
-```
-you should be able to access port-forwarded app from browser.
-
 ## how it works
 basically that is how it works
 ![howitworks](howitworks.png)
