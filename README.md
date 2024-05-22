@@ -21,7 +21,7 @@ add
 in /etc/hosts
 
 ## Retry with bodies
-I copied ReplyBody from https://linkerd.io/2021/10/26/how-linkerd-retries-http-requests-with-bodies/ and used it in kube-forwarded, so, proxied requests should be even more reliable.
+I copied ReplyBody from https://linkerd.io/2021/10/26/how-linkerd-retries-http-requests-with-bodies/ and used it in kube-forwarder, so, proxied requests should be even more reliable.
 
 ## how it works
 basically that is how it works
