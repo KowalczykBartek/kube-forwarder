@@ -5,8 +5,7 @@ use std::time::Duration;
 use std::convert::Infallible;
 use std::task::{Context, Poll};
 use futures::future::BoxFuture;
-use hyper::client::conn::SendRequest;
-use hyper::{body, Body};
+use hyper::client::conn::{Builder, SendRequest};
 use hyper::{Request, Response};
 use k8s_openapi::api::core::v1::Pod;
 use kube::api::ListParams;
@@ -18,7 +17,8 @@ use futures::StreamExt;
 use std::fmt::Debug;
 use tower::Layer;
 
-const MAX_RETRIES: usize = 4;
+use crate::reply_body::ReplayBody;
+const MAX_RETRIES: usize = 10;
 
 #[derive(Debug, Clone)]
 struct RuntimeError {
@@ -56,21 +56,21 @@ pub struct LogService<S> {
     inner: S,
 }
 
-impl<S> Service<Request<Body>> for LogService<S>
+impl<S> Service<Request<hyper::Body>> for LogService<S>
 where
-    S: Service<Request<Body>, Response = Response<Body>>,
+    S: Service<Request<hyper::Body>, Response = Response<hyper::Body>>,
     S::Error: Debug,
     S::Future: Send + 'static,
 {
-    type Response = Response<Body>;
+    type Response = Response<hyper::Body>;
     type Error = S::Error;
-    type Future = BoxFuture<'static, Result<Response<Body>, Self::Error>>;
+    type Future = BoxFuture<'static, Result<Response<hyper::Body>, Self::Error>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: Request<Body>) -> Self::Future {
+    fn call(&mut self, req: Request<hyper::Body>) -> Self::Future {
         println!("Service called with {req:?}");
         let headers = req.headers().clone();
         let method = req.method().clone();
@@ -86,7 +86,7 @@ where
                 chunk
             });
 
-        let debugable_body = Body::wrap_stream(debugable_body);
+        let debugable_body = hyper::Body::wrap_stream(debugable_body);
         
         let mut request = Request::builder()
             .uri(uri)
@@ -117,7 +117,7 @@ where
                     chunk
                 });
         
-            let debugable_body = Body::wrap_stream(debugable_body);
+            let debugable_body = hyper::Body::wrap_stream(debugable_body);
             let response = Response::from_parts(parts, debugable_body);
 
             Ok(response)
@@ -129,7 +129,7 @@ where
 #[derive(Clone)]
 pub struct RequestHandlingService {
     client: Client,
-    upstream_connection: Arc<Mutex<Option<SendRequest<Body>>>>
+    upstream_connection: Arc<Mutex<Option<SendRequest<ReplayBody<hyper::Body>>>>>
 }
 
 impl RequestHandlingService {
@@ -139,8 +139,8 @@ impl RequestHandlingService {
     }
 }
 
-impl Service<Request<Body>> for RequestHandlingService {
-    type Response = Response<Body>;
+impl Service<Request<hyper::Body>> for RequestHandlingService {
+    type Response = Response<hyper::Body>;
     type Error = Infallible;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
@@ -148,7 +148,7 @@ impl Service<Request<Body>> for RequestHandlingService {
         Ok(()).into()
     }
 
-    fn call(&mut self, req: Request<Body>) -> Self::Future {
+    fn call(&mut self, req: Request<hyper::Body>) -> Self::Future {
         let client = self.client.clone();
         let upstream_connection = self.upstream_connection.clone();
 
@@ -159,23 +159,42 @@ impl Service<Request<Body>> for RequestHandlingService {
             let uri: hyper::Uri = req.uri().to_string().parse().unwrap();
             let host = String::from(headers.get("host").unwrap().to_str().unwrap());
 
-            let body = req.into_body();
-            let full_body = body::to_bytes(body).await.unwrap();
+            let body: hyper::Body = req.into_body();
 
             let mut retries: usize = 0;
             let upstream_connection = upstream_connection;
+            let replay_body = ReplayBody::try_new(body, 1024).expect("channel body must not be too large");
+            let cloned_reply = replay_body.clone();
+
+            let mut request = Request::builder()
+                    .uri(uri.clone())
+                    .method(method.to_string().as_str())
+                    .body(replay_body)
+                    .unwrap();
+                
+            request.headers_mut().extend(headers.clone());
+
+            //initial request - because of original request body needs to be read (probably?)
+            match perform_forward(client.clone(), request, upstream_connection.clone()).await {
+                Ok(response) => {
+                    return Ok(response)
+                }, 
+                Err(err) => {
+                    log::error!("Forwarding failed ! retrry will be performed {}: {}",host, err);
+                }
+            }
 
             while retries < MAX_RETRIES { 
                 retries += 1;
 
                 let client = client.clone();
-                let body = full_body.clone();
+                let body = cloned_reply.clone();
                 let upstream_connection = upstream_connection.clone();
 
                 let mut request = Request::builder()
                     .uri(uri.clone())
                     .method(method.to_string().as_str())
-                    .body(Body::from(body))
+                    .body(body)
                     .unwrap();
                 
                 request.headers_mut().extend(headers.clone());
@@ -201,15 +220,15 @@ impl Service<Request<Body>> for RequestHandlingService {
     }
 }
 
-fn take(upstream_connection: Arc<Mutex<Option<SendRequest<Body>>>>) -> Option<SendRequest<Body>> {
+fn take(upstream_connection: Arc<Mutex<Option<SendRequest<ReplayBody<hyper::Body>>>>>) -> Option<SendRequest<ReplayBody<hyper::Body>>> {
     upstream_connection.lock().unwrap().take()
 }
 
-fn give_it_back(sender: SendRequest<Body>, upstream_connection: Arc<Mutex<Option<SendRequest<Body>>>>) {
+fn give_it_back(sender: SendRequest<ReplayBody<hyper::Body>>, upstream_connection: Arc<Mutex<Option<SendRequest<ReplayBody<hyper::Body>>>>>) {
     upstream_connection.lock().unwrap().replace(sender);
 }
 
-async fn perform_forward(client: Client, req: Request<Body>, upstream_connection: Arc<Mutex<Option<SendRequest<Body>>>>) -> Result<Response<Body>, Box<dyn Error + Send + Sync>> {
+async fn perform_forward(client: Client, req: Request<ReplayBody<hyper::Body>>, upstream_connection: Arc<Mutex<Option<SendRequest<ReplayBody<hyper::Body>>>>>) -> Result<Response<hyper::Body>, Box<dyn Error + Send + Sync>> {
 
     let headers = req.headers().clone();
     let host = String::from(headers.get("host").unwrap().to_str().unwrap());
@@ -236,7 +255,7 @@ async fn perform_forward(client: Client, req: Request<Body>, upstream_connection
     log::info!("[{}] application_name {} namespace {}", host, application_name, namespace);
 
     let port = get_stream(client.clone(), application_name, &host, namespace).await?;    
-    let (mut sender, connection) = hyper::client::conn::handshake(port).await?;
+    let (mut sender, connection) =  Builder::new().handshake(port).await?;
 
     let moved_host = host.clone();
     tokio::spawn(async move {
@@ -249,7 +268,7 @@ async fn perform_forward(client: Client, req: Request<Body>, upstream_connection
     let resp = Ok(sender.send_request(req).await?);
 
     {
-        //here I guess we succedded, so, sender is valid
+        // here I guess we succedded, so, sender is valid
         let mut connection_state = upstream_connection.lock().unwrap();
         connection_state.replace(sender);
     }

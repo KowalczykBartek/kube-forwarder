@@ -12,6 +12,7 @@ use crate::forwarding_service::{LogLayer, RequestHandlingService};
 
 mod print_ascii;
 mod forwarding_service;
+mod reply_body;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
